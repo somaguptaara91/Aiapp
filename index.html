@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>राधा नाम जाप काउंटर</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Tinos', serif;
+        }
+        .devotional-bg {
+            background-image: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.8)), url('https://placehold.co/1920x1080/FFF3F8/9B59B6?text=राधा+कृष्ण+के+पद');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="devotional-bg flex flex-col items-center justify-center p-4">
+
+    <script type="module">
+        // Firebase SDK imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, orderBy, getDocs, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase कॉन्फ़िगरेशन
+        const firebaseConfig = {
+            apiKey: "AIzaSyDOOJcNVgo_e4Vg_M1aJhODWTO-rERZSa4",
+            authDomain: "new-prototype-62mkv.firebaseapp.com",
+            projectId: "new-prototype-62mkv",
+            storageBucket: "new-prototype-62mkv.firebasestorage.app",
+            messagingSenderId: "155279966187",
+            appId: "1:155279966187:web:005fe67962772e3bc863ae"
+        };
+
+        let db, auth, userId, userEmail, userIsAdmin;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+        
+        // Auth state परिवर्तन के लिए लिसनर
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                userEmail = user.email;
+                console.log("उपयोगकर्ता लॉग इन है:", userId);
+                await initializeUser();
+                await updateUI();
+                await setupRealtimeListeners();
+            } else {
+                console.log("कोई उपयोगकर्ता लॉग इन नहीं है।");
+                userId = null;
+                userIsAdmin = false;
+                showLoginScreen();
+            }
+        });
+
+        // Firebase टोकन के साथ लॉगिन
+        if (typeof __initial_auth_token !== 'undefined') {
+            signInWithCustomToken(auth, __initial_auth_token).catch(async (error) => {
+                console.error("कस्टम टोकन के साथ लॉगिन विफल हुआ:", error);
+                await signInAnonymously(auth);
+            });
+        } else {
+            signInAnonymously(auth);
+        }
+
+        // DOM तत्व
+        const jaapCounterSection = document.getElementById('jaap-counter-section');
+        const adminPanelSection = document.getElementById('admin-panel-section');
+        const loginRegisterSection = document.getElementById('login-register-section');
+        const mainLoader = document.getElementById('main-loader');
+        const totalJaapCountSpan = document.getElementById('total-jaap-count');
+        const todayJaapCountSpan = document.getElementById('today-jaap-count');
+        const logoutButton = document.getElementById('logout-button');
+        const adminPanelButton = document.getElementById('admin-panel-button');
+        const loginEmailInput = document.getElementById('login-email');
+        const loginPasswordInput = document.getElementById('login-password');
+        const loginButton = document.getElementById('login-button');
+        const registerButton = document.getElementById('register-button');
+        const adminTableBody = document.getElementById('admin-table-body');
+        const totalUsersSpan = document.getElementById('total-users-count');
+        const loginErrorMessage = document.getElementById('login-error-message');
+        const messageModal = document.getElementById('message-modal');
+        const messageModalText = document.getElementById('message-modal-text');
+        const messageModalCloseButton = document.getElementById('message-modal-close');
+        
+        // Gemini API के लिए नए तत्व
+        const geminiQuoteButton = document.getElementById('gemini-quote-button');
+        const quoteDisplay = document.getElementById('quote-display');
+        const geminiTTSButton = document.getElementById('gemini-tts-button');
+        const audioPlayer = document.getElementById('audio-player');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
+        // एक संदेश दिखाने के लिए फ़ंक्शन (alert के बजाय)
+        function showMessage(message) {
+            messageModalText.textContent = message;
+            messageModal.classList.remove('hidden');
+        }
+        messageModalCloseButton.addEventListener('click', () => {
+            messageModal.classList.add('hidden');
+        });
+
+        // लॉगिन/रजिस्टर स्क्रीन दिखाएं
+        function showLoginScreen() {
+            mainLoader.classList.add('hidden');
+            jaapCounterSection.classList.add('hidden');
+            adminPanelSection.classList.add('hidden');
+            loginRegisterSection.classList.remove('hidden');
+            loginErrorMessage.classList.add('hidden');
+        }
+
+        // मुख्य UI अपडेट करें
+        async function updateUI() {
+            mainLoader.classList.add('hidden');
+            loginRegisterSection.classList.add('hidden');
+            jaapCounterSection.classList.remove('hidden');
+            
+            // एडमिन पैनल दिखाएं या छुपाएं
+            if (userIsAdmin) {
+                adminPanelButton.classList.remove('hidden');
+            } else {
+                adminPanelButton.classList.add('hidden');
+                adminPanelSection.classList.add('hidden');
+            }
+        }
+
+        // उपयोगकर्ता के डेटा को प्रारंभ करें या अपडेट करें
+        async function initializeUser() {
+            if (!userId) return;
+            try {
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+                const userDocSnap = await getDoc(userDocRef);
+                const today = new Date().toISOString().split('T')[0];
+
+                if (!userDocSnap.exists()) {
+                    await setDoc(userDocRef, {
+                        name: auth.currentUser?.email?.split('@')[0] || 'अनाम उपयोगकर्ता',
+                        email: auth.currentUser?.email || 'अनाम',
+                        totalJaap: 0,
+                        todayJaap: 0,
+                        lastJaapDate: today,
+                        isAdmin: false,
+                        userId: userId
+                    });
+                    userIsAdmin = false;
+                } else {
+                    const userData = userDocSnap.data();
+                    userIsAdmin = userData.isAdmin || false;
+                    // यदि आज की तारीख पिछली जाप की तारीख से अलग है, तो आज के जाप को रीसेट करें
+                    if (userData.lastJaapDate !== today) {
+                        const batch = writeBatch(db);
+                        batch.update(userDocRef, {
+                            todayJaap: 0,
+                            lastJaapDate: today
+                        });
+                        await batch.commit();
+                    }
+                }
+            } catch (error) {
+                console.error("उपयोगकर्ता डेटा को प्रारंभ करने में त्रुटि:", error);
+                showMessage("उपयोगकर्ता डेटा लोड करने में समस्या। कृपया पुनः प्रयास करें।");
+            }
+        }
+
+        // रियल-टाइम लिसनर सेट करें
+        async function setupRealtimeListeners() {
+            if (!userId) return;
+            const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+            
+            // उपयोगकर्ता के जाप की संख्या के लिए लिसनर
+            onSnapshot(userDocRef, (doc) => {
+                if (doc.exists()) {
+                    const data = doc.data();
+                    totalJaapCountSpan.textContent = data.totalJaap || 0;
+                    todayJaapCountSpan.textContent = data.todayJaap || 0;
+                }
+            });
+
+            // यदि उपयोगकर्ता एडमिन है, तो एडमिन डेटा के लिए लिसनर
+            if (userIsAdmin) {
+                const usersRef = collection(db, 'artifacts', appId, 'users');
+                // Firestore में orderBy का उपयोग करने से बचें क्योंकि इसके लिए इंडेक्स की आवश्यकता होती है, और इसे JavaScript में सॉर्ट करें
+                onSnapshot(usersRef, async (querySnapshot) => {
+                    const users = [];
+                    querySnapshot.forEach((doc) => {
+                        users.push(doc.data());
+                    });
+                    
+                    // कुल जाप के आधार पर उपयोगकर्ताओं को सॉर्ट करें
+                    users.sort((a, b) => (b.totalJaap || 0) - (a.totalJaap || 0));
+                    
+                    // एडमिन पैनल को अपडेट करें
+                    updateAdminPanel(users);
+                });
+            }
+        }
+
+        // जाप बढ़ाने के लिए क्लिक इवेंट
+        document.body.addEventListener('click', async (event) => {
+            // लॉगिन/रजिस्टर या एडमिन सेक्शन पर क्लिक करने पर जाप न बढ़ाएं
+            if (event.target.closest('#login-register-section') || event.target.closest('#admin-panel-section')) {
+                return;
+            }
+            if (!userId) {
+                showMessage("जाप शुरू करने के लिए कृपया लॉगिन करें या रजिस्टर करें।");
+                return;
+            }
+            try {
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+                const docSnap = await getDoc(userDocRef);
+                
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const batch = writeBatch(db);
+                    
+                    const today = new Date().toISOString().split('T')[0];
+                    let todayJaap = data.todayJaap;
+                    let lastJaapDate = data.lastJaapDate;
+                    
+                    if (lastJaapDate !== today) {
+                        todayJaap = 1;
+                        lastJaapDate = today;
+                    } else {
+                        todayJaap++;
+                    }
+                    
+                    batch.update(userDocRef, {
+                        totalJaap: (data.totalJaap || 0) + 1,
+                        todayJaap: todayJaap,
+                        lastJaapDate: lastJaapDate
+                    });
+                    
+                    await batch.commit();
+                }
+            } catch (error) {
+                console.error("जाप को अपडेट करने में त्रुटि:", error);
+                showMessage("जाप गिनने में समस्या हुई।");
+            }
+        });
+
+        // लॉगिन फ़ंक्शन
+        loginButton.addEventListener('click', async () => {
+            const email = loginEmailInput.value;
+            const password = loginPasswordInput.value;
+            if (!email || !password) {
+                loginErrorMessage.textContent = 'कृपया ईमेल और पासवर्ड दर्ज करें।';
+                loginErrorMessage.classList.remove('hidden');
+                return;
+            }
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+            } catch (error) {
+                console.error("लॉगिन त्रुटि:", error.message);
+                loginErrorMessage.textContent = `लॉगिन विफल: ${error.message}`;
+                loginErrorMessage.classList.remove('hidden');
+            }
+        });
+
+        // रजिस्टर फ़ंक्शन
+        registerButton.addEventListener('click', async () => {
+            const email = loginEmailInput.value;
+            const password = loginPasswordInput.value;
+            if (!email || !password) {
+                loginErrorMessage.textContent = 'कृपया ईमेल और पासवर्ड दर्ज करें।';
+                loginErrorMessage.classList.remove('hidden');
+                return;
+            }
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showMessage("पंजीकरण सफल! अब आप लॉगिन कर सकते हैं।");
+                loginErrorMessage.classList.add('hidden');
+            } catch (error) {
+                console.error("पंजीकरण त्रुटि:", error.message);
+                loginErrorMessage.textContent = `पंजीकरण विफल: ${error.message}`;
+                loginErrorMessage.classList.remove('hidden');
+            }
+        });
+
+        // लॉगआउट फ़ंक्शन
+        logoutButton.addEventListener('click', async () => {
+            try {
+                await signOut(auth);
+                console.log("लॉगआउट सफल।");
+                location.reload(); // पेज रीलोड करें
+            } catch (error) {
+                console.error("लॉगआउट त्रुटि:", error);
+                showMessage("लॉगआउट में समस्या हुई।");
+            }
+        });
+
+        // एडमिन पैनल दिखाएं
+        adminPanelButton.addEventListener('click', () => {
+            jaapCounterSection.classList.add('hidden');
+            adminPanelSection.classList.remove('hidden');
+            document.querySelector('body').classList.remove('devotional-bg');
+            document.querySelector('body').classList.add('bg-gray-100');
+        });
+
+        // एडमिन पैनल UI अपडेट करें
+        function updateAdminPanel(users) {
+            adminTableBody.innerHTML = '';
+            totalUsersSpan.textContent = users.length;
+            users.forEach((user, index) => {
+                const row = document.createElement('tr');
+                row.className = 'bg-white border-b hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">${index + 1}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${user.name}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${user.email}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${user.totalJaap || 0}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${user.userId}</td>
+                `;
+                adminTableBody.appendChild(row);
+            });
+        }
+
+        // Gemini API से जाप प्रेरणा (quote) उत्पन्न करें
+        geminiQuoteButton.addEventListener('click', async () => {
+            if (!userId) {
+                showMessage("प्रेरणा पाने के लिए कृपया लॉगिन करें।");
+                return;
+            }
+            quoteDisplay.textContent = '';
+            loadingIndicator.classList.remove('hidden');
+            
+            // Exponential backoff के साथ fetch कॉल
+            const textToSpeak = "राधे कृष्ण, राधे कृष्ण, कृष्ण कृष्ण, राधे राधे। राधे श्याम, राधे श्याम, श्याम श्याम, राधे राधे।";
+            let retries = 0;
+            const maxRetries = 5;
+            const baseDelay = 1000;
+            
+            const pcmToWav = (pcmData, sampleRate) => {
+                const wavHeader = new ArrayBuffer(44);
+                const view = new DataView(wavHeader);
+                view.setUint32(0, 0x46464952, false); // "RIFF"
+                view.setUint32(4, 36 + pcmData.byteLength, true); // file size
+                view.setUint32(8, 0x45564157, false); // "WAVE"
+                view.setUint32(12, 0x20746d66, false); // "fmt "
+                view.setUint32(16, 16, true); // sub-chunk size
+                view.setUint16(20, 1, true); // audio format (1 = PCM)
+                view.setUint16(22, 1, true); // number of channels (1)
+                view.setUint32(24, sampleRate, true); // sample rate
+                view.setUint32(28, sampleRate * 2, true); // byte rate
+                view.setUint16(32, 2, true); // block align
+                view.setUint16(34, 16, true); // bits per sample
+                view.setUint32(36, 0x61746164, false); // "data"
+                view.setUint32(40, pcmData.byteLength, true); // data size
+                return new Blob([wavHeader, pcmData], { type: 'audio/wav' });
+            };
+
+            const base64ToArrayBuffer = (base64) => {
+                const binaryString = atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return bytes.buffer;
+            };
+
+            const fetchData = async () => {
+                const payload = {
+                    contents: [{ parts: [{ text: textToSpeak }] }],
+                    generationConfig: {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: "Puck" }
+                            }
+                        }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        console.error('TTS API त्रुटि:', errorData);
+                        if (response.status === 429 && retries < maxRetries) {
+                            const delay = baseDelay * Math.pow(2, retries);
+                            console.log(`दर सीमित। ${delay / 1000}s में पुनः प्रयास कर रहा है...`);
+                            retries++;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            return fetchData();
+                        } else {
+                            throw new Error('TTS API कॉल विफल');
+                        }
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.[0];
+                    const audioData = part?.inlineData?.data;
+                    const mimeType = part?.inlineData?.mimeType;
+
+                    if (audioData && mimeType && mimeType.startsWith("audio/")) {
+                        const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
+                        const pcmData = base64ToArrayBuffer(audioData);
+                        const pcm16 = new Int16Array(pcmData);
+                        const wavBlob = pcmToWav(pcm16, sampleRate);
+                        const audioUrl = URL.createObjectURL(wavBlob);
+                        audioPlayer.src = audioUrl;
+                        audioPlayer.play();
+                    } else {
+                        showMessage('ऑडियो उत्पन्न करने में विफल।');
+                    }
+                } catch (error) {
+                    console.error('TTS API कॉल त्रुटि:', error);
+                    showMessage('ऑडियो लोड नहीं हो सका।');
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                }
+            };
+            fetchData();
+        });
+    </script>
+
+    <div id="main-loader" class="flex flex-col items-center justify-center min-h-screen">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+        <p class="mt-4 text-gray-700 font-bold">लोड हो रहा है...</p>
+    </div>
+
+   <div id="login-register-section" class="hidden w-full max-w-sm p-6 bg-white rounded-xl shadow-lg border border-purple-200">
+        <h2 class="text-3xl font-bold text-center text-purple-800 mb-6">लॉगिन/रजिस्टर</h2>
+        <input type="email" id="login-email" placeholder="ईमेल आईडी" class="w-full px-4 py-3 rounded-lg border-2 border-purple-300 focus:outline-none focus:border-purple-600 mb-4">
+        <input type="password" id="login-password" placeholder="पासवर्ड" class="w-full px-4 py-3 rounded-lg border-2 border-purple-300 focus:outline-none focus:border-purple-600 mb-6">
+        <p id="login-error-message" class="text-red-600 text-sm text-center hidden mb-4"></p>
+        <div class="flex flex-col md:flex-row gap-4">
+            <button id="login-button" class="w-full bg-purple-600 text-white font-bold py-3 px-6 rounded-xl transition-all hover:bg-purple-700 transform hover:scale-105">लॉगिन</button>
+            <button id="register-button" class="w-full bg-pink-600 text-white font-bold py-3 px-6 rounded-xl transition-all hover:bg-pink-700 transform hover:scale-105">रजिस्टर</button>
+        </div>
+    </div>
+    
+    <div id="jaap-counter-section" class="hidden w-full max-w-2xl text-center">
+        <div class="p-6 md:p-10 bg-white bg-opacity-90 rounded-3xl shadow-2xl border-4 border-purple-300">
+            <h1 class="text-5xl md:text-6xl font-extrabold text-purple-900 mb-4">
+                राधा
+            </h1>
+            <p class="text-2xl md:text-3xl text-purple-700 font-medium mb-6">
+                नाम जाप काउंटर
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div class="bg-purple-100 p-6 rounded-2xl shadow-inner">
+                    <p class="text-xl md:text-2xl text-purple-800 mb-2">आज का जाप</p>
+                    <span id="today-jaap-count" class="text-5xl md:text-7xl font-bold text-purple-600">0</span>
+                </div>
+                <div class="bg-pink-100 p-6 rounded-2xl shadow-inner">
+                    <p class="text-xl md:text-2xl text-pink-800 mb-2">कुल जाप</p>
+                    <span id="total-jaap-count" class="text-5xl md:text-7xl font-bold text-pink-600">0</span>
+                </div>
+            </div>
+            <p class="text-xl md:text-2xl text-gray-700 font-bold mt-8 animate-pulse">
+                कहीं भी क्लिक करें या टैप करें!
+            </p>
+            <div class="flex flex-col sm:flex-row justify-center mt-6 gap-4">
+                <button id="gemini-quote-button" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-indigo-700">
+                    जाप प्रेरणा ✨
+                </button>
+                <button id="gemini-tts-button" class="bg-teal-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-teal-700">
+                    मंत्र सुनें 🎵
+                </button>
+                <button id="logout-button" class="bg-gray-500 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-gray-600">
+                    लॉगआउट
+                </button>
+                <button id="admin-panel-button" class="hidden bg-purple-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-purple-700">
+                    एडमिन पैनल
+                </button>
+            </div>
+            <p id="quote-display" class="mt-8 text-xl italic text-gray-800 min-h-[4rem] flex items-center justify-center text-center"></p>
+            <audio id="audio-player" class="hidden"></audio>
+        </div>
+    </div>
+    
+    <div id="admin-panel-section" class="hidden w-full max-w-4xl p-6 bg-white rounded-xl shadow-lg border border-purple-200 mt-8">
+        <h2 class="text-3xl font-bold text-center text-purple-800 mb-4">एडमिन पैनल</h2>
+        <p class="text-center text-gray-600 mb-6">कुल उपयोगकर्ता: <span id="total-users-count" class="font-bold text-purple-700">0</span></p>
+        <div class="overflow-x-auto relative shadow-md rounded-lg">
+            <table class="w-full text-sm text-left text-gray-500">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                    <tr>
+                        <th scope="col" class="py-3 px-6">रैंक</th>
+                        <th scope="col" class="py-3 px-6">नाम</th>
+                        <th scope="col" class="py-3 px-6">ईमेल आईडी</th>
+                        <th scope="col" class="py-3 px-6">कुल जाप</th>
+                        <th scope="col" class="py-3 px-6">उपयोगकर्ता आईडी</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-table-body">
+                    </tbody>
+            </table>
+        </div>
+        <div class="flex justify-center mt-6">
+            <button onclick="window.location.reload();" class="bg-purple-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-purple-700">
+                जाप काउंटर पर वापस जाएं
+            </button>
+        </div>
+    </div>
+    
+    <div id="message-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <p id="message-modal-text" class="text-lg text-gray-900"></p>
+                <div class="mt-4 flex justify-center">
+                    <button id="message-modal-close" class="bg-purple-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-600">बंद करें</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="loading-indicator" class="hidden fixed inset-0 bg-gray-800 bg-opacity-50 flex items-center justify-center">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+    </div>
+</body>
+</html>
