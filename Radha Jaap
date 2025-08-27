@@ -330,66 +330,6 @@
             loadingIndicator.classList.remove('hidden');
             
             // Exponential backoff के साथ fetch कॉल
-            const prompt = "राधा कृष्ण के नाम जाप के महत्व पर एक बहुत छोटा, प्रेरणादायक और आध्यात्मिक उद्धरण या श्लोक लिखें। यह 50 शब्दों से कम का होना चाहिए।";
-            let retries = 0;
-            const maxRetries = 5;
-            const baseDelay = 1000;
-
-            const fetchData = async () => {
-                const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
-                const payload = { contents: chatHistory };
-                const apiKey = "";
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-
-                try {
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        console.error('API त्रुटि:', errorData);
-                        if (response.status === 429 && retries < maxRetries) {
-                            const delay = baseDelay * Math.pow(2, retries);
-                            console.log(`दर सीमित। ${delay / 1000}s में पुनः प्रयास कर रहा है...`);
-                            retries++;
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            return fetchData();
-                        } else {
-                            throw new Error('API कॉल विफल');
-                        }
-                    }
-
-                    const result = await response.json();
-                    if (result.candidates && result.candidates.length > 0 &&
-                        result.candidates[0].content && result.candidates[0].content.parts &&
-                        result.candidates[0].content.parts.length > 0) {
-                        const text = result.candidates[0].content.parts[0].text;
-                        quoteDisplay.textContent = text;
-                    } else {
-                        quoteDisplay.textContent = 'प्रेरणादायक उद्धरण उत्पन्न करने में विफल।';
-                    }
-                } catch (error) {
-                    console.error('Gemini API कॉल त्रुटि:', error);
-                    quoteDisplay.textContent = 'प्रेरणादायक उद्धरण लोड नहीं हो सका।';
-                } finally {
-                    loadingIndicator.classList.add('hidden');
-                }
-            };
-            fetchData();
-        });
-
-        // Gemini API से टेक्स्ट-टू-स्पीच (TTS) उत्पन्न करें
-        geminiTTSButton.addEventListener('click', async () => {
-            if (!userId) {
-                showMessage("मंत्र सुनने के लिए कृपया लॉगिन करें।");
-                return;
-            }
-            loadingIndicator.classList.remove('hidden');
-            
-            // Exponential backoff के साथ fetch कॉल
             const textToSpeak = "राधे कृष्ण, राधे कृष्ण, कृष्ण कृष्ण, राधे राधे। राधे श्याम, राधे श्याम, श्याम श्याम, राधे राधे।";
             let retries = 0;
             const maxRetries = 5;
@@ -431,4 +371,157 @@
                         responseModalities: ["AUDIO"],
                         speechConfig: {
                             voiceConfig: {
-                            
+                                prebuiltVoiceConfig: { voiceName: "Puck" }
+                            }
+                        }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        console.error('TTS API त्रुटि:', errorData);
+                        if (response.status === 429 && retries < maxRetries) {
+                            const delay = baseDelay * Math.pow(2, retries);
+                            console.log(`दर सीमित। ${delay / 1000}s में पुनः प्रयास कर रहा है...`);
+                            retries++;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            return fetchData();
+                        } else {
+                            throw new Error('TTS API कॉल विफल');
+                        }
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.[0];
+                    const audioData = part?.inlineData?.data;
+                    const mimeType = part?.inlineData?.mimeType;
+
+                    if (audioData && mimeType && mimeType.startsWith("audio/")) {
+                        const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
+                        const pcmData = base64ToArrayBuffer(audioData);
+                        const pcm16 = new Int16Array(pcmData);
+                        const wavBlob = pcmToWav(pcm16, sampleRate);
+                        const audioUrl = URL.createObjectURL(wavBlob);
+                        audioPlayer.src = audioUrl;
+                        audioPlayer.play();
+                    } else {
+                        showMessage('ऑडियो उत्पन्न करने में विफल।');
+                    }
+                } catch (error) {
+                    console.error('TTS API कॉल त्रुटि:', error);
+                    showMessage('ऑडियो लोड नहीं हो सका।');
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                }
+            };
+            fetchData();
+        });
+    </script>
+
+    <div id="main-loader" class="flex flex-col items-center justify-center min-h-screen">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+        <p class="mt-4 text-gray-700 font-bold">लोड हो रहा है...</p>
+    </div>
+
+    <div id="login-register-section" class="hidden w-full max-w-sm p-6 bg-white rounded-xl shadow-lg border border-purple-200">
+        <h2 class="text-3xl font-bold text-center text-purple-800 mb-6">लॉगिन/रजिस्टर</h2>
+        <input type="email" id="login-email" placeholder="ईमेल आईडी" class="w-full px-4 py-3 rounded-lg border-2 border-purple-300 focus:outline-none focus:border-purple-600 mb-4">
+        <input type="password" id="login-password" placeholder="पासवर्ड" class="w-full px-4 py-3 rounded-lg border-2 border-purple-300 focus:outline-none focus:border-purple-600 mb-6">
+        <p id="login-error-message" class="text-red-600 text-sm text-center hidden mb-4"></p>
+        <div class="flex flex-col md:flex-row gap-4">
+            <button id="login-button" class="w-full bg-purple-600 text-white font-bold py-3 px-6 rounded-xl transition-all hover:bg-purple-700 transform hover:scale-105">लॉगिन</button>
+            <button id="register-button" class="w-full bg-pink-600 text-white font-bold py-3 px-6 rounded-xl transition-all hover:bg-pink-700 transform hover:scale-105">रजिस्टर</button>
+        </div>
+    </div>
+    
+    <div id="jaap-counter-section" class="hidden w-full max-w-2xl text-center">
+        <div class="p-6 md:p-10 bg-white bg-opacity-90 rounded-3xl shadow-2xl border-4 border-purple-300">
+            <h1 class="text-5xl md:text-6xl font-extrabold text-purple-900 mb-4">
+                राधा
+            </h1>
+            <p class="text-2xl md:text-3xl text-purple-700 font-medium mb-6">
+                नाम जाप काउंटर
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div class="bg-purple-100 p-6 rounded-2xl shadow-inner">
+                    <p class="text-xl md:text-2xl text-purple-800 mb-2">आज का जाप</p>
+                    <span id="today-jaap-count" class="text-5xl md:text-7xl font-bold text-purple-600">0</span>
+                </div>
+                <div class="bg-pink-100 p-6 rounded-2xl shadow-inner">
+                    <p class="text-xl md:text-2xl text-pink-800 mb-2">कुल जाप</p>
+                    <span id="total-jaap-count" class="text-5xl md:text-7xl font-bold text-pink-600">0</span>
+                </div>
+            </div>
+            <p class="text-xl md:text-2xl text-gray-700 font-bold mt-8 animate-pulse">
+                कहीं भी क्लिक करें या टैप करें!
+            </p>
+            <div class="flex flex-col sm:flex-row justify-center mt-6 gap-4">
+                <button id="gemini-quote-button" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-indigo-700">
+                    जाप प्रेरणा ✨
+                </button>
+                <button id="gemini-tts-button" class="bg-teal-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-teal-700">
+                    मंत्र सुनें 🎵
+                </button>
+                <button id="logout-button" class="bg-gray-500 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-gray-600">
+                    लॉगआउट
+                </button>
+                <button id="admin-panel-button" class="hidden bg-purple-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-purple-700">
+                    एडमिन पैनल
+                </button>
+            </div>
+            <p id="quote-display" class="mt-8 text-xl italic text-gray-800 min-h-[4rem] flex items-center justify-center text-center"></p>
+            <audio id="audio-player" class="hidden"></audio>
+        </div>
+    </div>
+    
+    <div id="admin-panel-section" class="hidden w-full max-w-4xl p-6 bg-white rounded-xl shadow-lg border border-purple-200 mt-8">
+        <h2 class="text-3xl font-bold text-center text-purple-800 mb-4">एडमिन पैनल</h2>
+        <p class="text-center text-gray-600 mb-6">कुल उपयोगकर्ता: <span id="total-users-count" class="font-bold text-purple-700">0</span></p>
+        <div class="overflow-x-auto relative shadow-md rounded-lg">
+            <table class="w-full text-sm text-left text-gray-500">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                    <tr>
+                        <th scope="col" class="py-3 px-6">रैंक</th>
+                        <th scope="col" class="py-3 px-6">नाम</th>
+                        <th scope="col" class="py-3 px-6">ईमेल आईडी</th>
+                        <th scope="col" class="py-3 px-6">कुल जाप</th>
+                        <th scope="col" class="py-3 px-6">उपयोगकर्ता आईडी</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-table-body">
+                    </tbody>
+            </table>
+        </div>
+        <div class="flex justify-center mt-6">
+            <button onclick="window.location.reload();" class="bg-purple-600 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all hover:bg-purple-700">
+                जाप काउंटर पर वापस जाएं
+            </button>
+        </div>
+    </div>
+    
+    <div id="message-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <p id="message-modal-text" class="text-lg text-gray-900"></p>
+                <div class="mt-4 flex justify-center">
+                    <button id="message-modal-close" class="bg-purple-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-600">बंद करें</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="loading-indicator" class="hidden fixed inset-0 bg-gray-800 bg-opacity-50 flex items-center justify-center">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+    </div>
+</body>
+</html>
